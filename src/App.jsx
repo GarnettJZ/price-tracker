@@ -1,79 +1,109 @@
 // src/App.jsx
 
-import { useState, useEffect } from 'react'
-import './App.css'
-// Import our database connection and Firestore functions
-import { db } from './firebase' 
-import { collection, addDoc, onSnapshot, orderBy, query } from "firebase/firestore"; 
+import { useState, useEffect } from 'react';
+import './App.css';
+import { db, storage } from './firebase'; 
+import { collection, addDoc, onSnapshot, orderBy, query } from "firebase/firestore";
+import { ref, uploadBytesResumable, getDownloadURL } from "firebase/storage";
 
 function App() {
   const [productName, setProductName] = useState('');
   const [price, setPrice] = useState('');
-  
-  // New state for loading and storing products from Firebase
+  const [image, setImage] = useState(null);
+
   const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [uploadProgress, setUploadProgress] = useState(0);
 
-  // --- 1. WRITE data to Firebase ---
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    if (!productName || !price) {
-      alert('Please enter a product name and price.');
-      return;
-    }
-
-    try {
-      // 'products' is the name of our collection in Firestore
-      const docRef = await addDoc(collection(db, "products"), {
-        name: productName,
-        price: Number(price), // Store price as a number
-        createdAt: new Date() // Add a timestamp
-      });
-      console.log("Document written with ID: ", docRef.id);
-
-      // Clear the form
-      setProductName('');
-      setPrice('');
-
-    } catch (e) {
-      console.error("Error adding document: ", e);
-      alert("Error saving price. Check console for details.");
+  // Handle file input change
+  const handleImageChange = (e) => {
+    if (e.target.files[0]) {
+      setImage(e.target.files[0]);
     }
   };
 
-  // --- 2. READ data from Firebase (in real-time) ---
+  // Handle form submission (NOW INCLUDES UPLOAD)
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    
+    if (!productName || !price || !image) {
+      alert('Please fill in all fields and upload an image.');
+      return;
+    }
+
+    // Create a reference to the storage location (e.g., 'images/timestamp_filename.jpg')
+    const storageRef = ref(storage, `images/${Date.now()}_${image.name}`);
+    
+    // Start the upload task
+    const uploadTask = uploadBytesResumable(storageRef, image);
+
+    // Listen for upload progress and completion
+    uploadTask.on(
+      "state_changed",
+      (snapshot) => {
+        // Update progress
+        const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
+        setUploadProgress(progress);
+      },
+      (error) => {
+        // Handle unsuccessful uploads
+        console.error("Error uploading image: ", error);
+        alert("Error uploading image. Check console.");
+        setUploadProgress(0); // Reset progress
+      },
+      () => {
+        // On successful upload, get the download URL
+        getDownloadURL(uploadTask.snapshot.ref).then(async (downloadURL) => {
+          
+          // Now, save the product info (including the URL) to Firestore
+          try {
+            await addDoc(collection(db, "products"), {
+              name: productName,
+              price: Number(price),
+              imageUrl: downloadURL, // Save the image URL
+              createdAt: new Date()
+            });
+            
+            // Reset the form
+            setProductName('');
+            setPrice('');
+            setImage(null);
+            setUploadProgress(0);
+            document.getElementById("imageInput").value = null; // Clear file input
+
+          } catch (e) {
+            console.error("Error adding document: ", e);
+            alert("Error saving product to database.");
+          }
+        });
+      }
+    );
+  };
+
+  // --- READ data from Firebase ---
   useEffect(() => {
     setLoading(true);
-    
-    // Create a query to get products, ordered by when they were created
     const productsCollection = collection(db, "products");
     const q = query(productsCollection, orderBy("createdAt", "desc"));
 
-    // onSnapshot listens for real-time updates
     const unsubscribe = onSnapshot(q, (querySnapshot) => {
       const productsData = [];
       querySnapshot.forEach((doc) => {
-        // 'doc.data()' has the data (name, price), 
-        // 'doc.id' is the unique document ID
         productsData.push({ id: doc.id, ...doc.data() });
       });
       setProducts(productsData);
       setLoading(false);
     });
 
-    // Cleanup function to stop listening when the component unmounts
     return () => unsubscribe();
-  }, []); // The empty array [] means this runs once when the app loads
+  }, []);
 
-
-return (
+  return (
     <div className="app-container">
       <h1>My Price Tracker</h1>
       
-      {/* The Form for adding new items */}
       <form className="add-item-form" onSubmit={handleSubmit}>
         <div className="form-group">
-          {/* THIS LABEL WAS MISSING */}
           <label htmlFor="productName">Product Name</label>
           <input
             id="productName"
@@ -85,7 +115,6 @@ return (
           />
         </div>
         <div className="form-group">
-          {/* THIS LABEL WAS MISSING */}
           <label htmlFor="price">Price (RM)</label>
           <input
             id="price"
@@ -97,26 +126,48 @@ return (
             required
           />
         </div>
-        <button type="submit">Add Price</button>
+        
+        {/* --- New File Input --- */}
+        <div className="form-group">
+          <label htmlFor="imageInput">Product Image</label>
+          <input
+            id="imageInput"
+            type="file"
+            accept="image/*" // Only accept image files
+            onChange={handleImageChange}
+            required
+          />
+        </div>
+
+        {/* --- Upload Progress Bar --- */}
+        {uploadProgress > 0 && uploadProgress < 100 && (
+          <progress value={uploadProgress} max="100" />
+        )}
+
+        {/* Disable button while uploading */}
+        <button type="submit" disabled={uploadProgress > 0 && uploadProgress < 100}>
+          {uploadProgress > 0 && uploadProgress < 100 ? `Uploading ${uploadProgress.toFixed(0)}%` : 'Add Price'}
+        </button>
       </form>
 
-      {/* The List of saved prices */}
+      {/* --- The List (now with images) --- */}
       <div className="price-list">
         <h2>Saved Prices</h2>
         {loading && <p>(Loading prices...)</p>}
         
-        {!loading && products.length === 0 && (
-          <p>(No prices saved yet)</p>
-        )}
+        {!loading && products.length === 0 && <p>(No prices saved yet)</p>}
         
         <ul>
           {products.map((product) => (
             <li key={product.id}>
-              <span>
-                {/* THIS IS THE FIX - MAKE SURE {product.name} IS HERE */}
-                {product.name}
-                <small>{product.createdAt.toDate().toLocaleDateString()}</small>
-              </span>
+              {/* Add the image tag */}
+              <img src={product.imageUrl} alt={product.name} className="product-image" />
+              <div className="product-details">
+                <span>
+                  {product.name}
+                  <small>{product.createdAt.toDate().toLocaleDateString()}</small>
+                </span>
+              </div>
               <span className="price">RM {product.price.toFixed(2)}</span>
             </li>
           ))}
@@ -125,10 +176,5 @@ return (
     </div>
   );
 }
-
-// DELETE THE STYLE TAG BELOW THIS LINE
-// const style = document.createElement('style');
-// ... (delete all of this) ...
-// document.head.appendChild(style);
 
 export default App;
