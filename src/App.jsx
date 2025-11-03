@@ -2,85 +2,49 @@
 
 import { useState, useEffect } from 'react';
 import './App.css';
-import { db, storage } from './firebase'; 
+import { db } from './firebase'; 
 import { collection, addDoc, onSnapshot, orderBy, query } from "firebase/firestore";
-import { ref, uploadBytesResumable, getDownloadURL } from "firebase/storage";
 
 function App() {
   const [productName, setProductName] = useState('');
   const [price, setPrice] = useState('');
-  const [image, setImage] = useState(null);
+  // New state for the image URL
+  const [imageUrl, setImageUrl] = useState(''); 
 
   const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [uploadProgress, setUploadProgress] = useState(0);
 
-  // Handle file input change
-  const handleImageChange = (e) => {
-    if (e.target.files[0]) {
-      setImage(e.target.files[0]);
-    }
-  };
-
-  // Handle form submission (NOW INCLUDES UPLOAD)
-  const handleSubmit = (e) => {
+  // --- Handle form submission (Simplified) ---
+  const handleSubmit = async (e) => {
     e.preventDefault();
     
-    if (!productName || !price || !image) {
-      alert('Please fill in all fields and upload an image.');
+    // Check for all three fields
+    if (!productName || !price || !imageUrl) {
+      alert('Please fill in all fields.');
       return;
     }
 
-    // Create a reference to the storage location (e.g., 'images/timestamp_filename.jpg')
-    const storageRef = ref(storage, `images/${Date.now()}_${image.name}`);
-    
-    // Start the upload task
-    const uploadTask = uploadBytesResumable(storageRef, image);
+    try {
+      // Save the product info (including the URL) to Firestore
+      await addDoc(collection(db, "products"), {
+        name: productName,
+        price: Number(price),
+        imageUrl: imageUrl, // Save the image URL from the text box
+        createdAt: new Date()
+      });
+      
+      // Reset the form
+      setProductName('');
+      setPrice('');
+      setImageUrl(''); // Reset the new URL field
 
-    // Listen for upload progress and completion
-    uploadTask.on(
-      "state_changed",
-      (snapshot) => {
-        // Update progress
-        const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
-        setUploadProgress(progress);
-      },
-      (error) => {
-        // Handle unsuccessful uploads
-        console.error("Error uploading image: ", error);
-        alert("Error uploading image. Check console.");
-        setUploadProgress(0); // Reset progress
-      },
-      () => {
-        // On successful upload, get the download URL
-        getDownloadURL(uploadTask.snapshot.ref).then(async (downloadURL) => {
-          
-          // Now, save the product info (including the URL) to Firestore
-          try {
-            await addDoc(collection(db, "products"), {
-              name: productName,
-              price: Number(price),
-              imageUrl: downloadURL, // Save the image URL
-              createdAt: new Date()
-            });
-            
-            // Reset the form
-            setProductName('');
-            setPrice('');
-            setImage(null);
-            setUploadProgress(0);
-            document.getElementById("imageInput").value = null; // Clear file input
-
-          } catch (e) {
-            console.error("Error adding document: ", e);
-            alert("Error saving product to database.");
-          }
-        });
-      }
-    );
+    } catch (e) {
+      console.error("Error adding document: ", e);
+      alert("Error saving product to database.");
+    }
   };
 
-  // --- READ data from Firebase ---
+  // --- Read data from Firebase ---
   useEffect(() => {
     setLoading(true);
     const productsCollection = collection(db, "products");
@@ -127,30 +91,23 @@ function App() {
           />
         </div>
         
-        {/* --- New File Input --- */}
+        {/* --- Replaced File Input with Text Input --- */}
         <div className="form-group">
-          <label htmlFor="imageInput">Product Image</label>
+          <label htmlFor="imageUrl">Image URL</label>
           <input
-            id="imageInput"
-            type="file"
-            accept="image/*" // Only accept image files
-            onChange={handleImageChange}
+            id="imageUrl"
+            type="url"
+            value={imageUrl}
+            onChange={(e) => setImageUrl(e.target.value)}
+            placeholder="e.g., https://cdn.discordapp.com/..."
             required
           />
         </div>
 
-        {/* --- Upload Progress Bar --- */}
-        {uploadProgress > 0 && uploadProgress < 100 && (
-          <progress value={uploadProgress} max="100" />
-        )}
-
-        {/* Disable button while uploading */}
-        <button type="submit" disabled={uploadProgress > 0 && uploadProgress < 100}>
-          {uploadProgress > 0 && uploadProgress < 100 ? `Uploading ${uploadProgress.toFixed(0)}%` : 'Add Price'}
-        </button>
+        <button type="submit">Add Price</button>
       </form>
 
-      {/* --- The List (now with images) --- */}
+      {/* --- The List (still shows images) --- */}
       <div className="price-list">
         <h2>Saved Prices</h2>
         {loading && <p>(Loading prices...)</p>}
@@ -160,7 +117,6 @@ function App() {
         <ul>
           {products.map((product) => (
             <li key={product.id}>
-              {/* Add the image tag */}
               <img src={product.imageUrl} alt={product.name} className="product-image" />
               <div className="product-details">
                 <span>
